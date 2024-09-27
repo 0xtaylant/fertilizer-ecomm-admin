@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import { mongooseConnect } from "@/lib/mongoose";
 import Cart from '@/app/models/cartModel';
+import { getServerSession } from "next-auth/next";
+import { authOptions } from "../auth/[...nextauth]/route";
 
 export async function GET(request) {
   await mongooseConnect();
@@ -62,19 +64,30 @@ export async function PUT(request) {
 
 export async function DELETE(request) {
   await mongooseConnect();
+  const session = await getServerSession(authOptions);
+  
+  if (!session || !session.user) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
   const { searchParams } = new URL(request.url);
   const userId = searchParams.get('userId');
-  const stokIsmi = searchParams.get('stokIsmi');
 
-  if (!userId || !stokIsmi) {
-    return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
+  if (!userId) {
+    return NextResponse.json({ error: 'userId is required' }, { status: 400 });
   }
 
   try {
-    await Cart.findOneAndDelete({ userId, stokIsmi });
-    const updatedCart = await Cart.find({ userId });
-    return NextResponse.json(updatedCart);
+    const result = await Cart.deleteMany({ userId: userId });
+    console.log('Cart deletion result:', result);
+
+    if (result.deletedCount === 0) {
+      return NextResponse.json({ message: 'No items found in cart to delete' }, { status: 200 });
+    }
+
+    return NextResponse.json({ message: 'Cart items deleted successfully' }, { status: 200 });
   } catch (error) {
-    return NextResponse.json({ error: 'Failed to remove from cart' }, { status: 500 });
+    console.error('Error deleting cart items:', error);
+    return NextResponse.json({ error: `Failed to delete cart items: ${error.message}` }, { status: 500 });
   }
 }

@@ -1,106 +1,158 @@
 "use client";
+import { useState, useEffect } from 'react';
 import Layout from "../components/Layout";
-import { useEffect } from 'react';
-import { useSelector, useDispatch } from 'react-redux';
-import { fetchCart, updateCartItem, removeFromCart, finalizeOrder } from '../../store/cartSlice';
 import { useSession } from "next-auth/react";
-import { useRouter } from 'next/navigation';
+import axios from 'axios';
+import Link from 'next/link';
 
 export default function CartPage() {
-  const dispatch = useDispatch();
-  const router = useRouter();
-  const { items, status, error } = useSelector((state) => state.cart);
-  const { data: session, status: sessionStatus } = useSession();
+  const [cartItems, setCartItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [users, setUsers] = useState([]);
+  const [selectedUser, setSelectedUser] = useState('');
+  const { data: session, status } = useSession();
 
   useEffect(() => {
-    if (sessionStatus === "authenticated" && session?.user?.id) {
-      dispatch(fetchCart(session.user.id));
-    } else if (sessionStatus === "unauthenticated") {
-      router.push('/login');
+    if (status === "authenticated" && session?.user?.id) {
+      fetchCartItems();
+      fetchUsers();
+    } else if (status === "unauthenticated") {
+      // Handle unauthenticated state
+      setLoading(false);
     }
-  }, [dispatch, session, sessionStatus, router]);
+  }, [status, session]);
 
-  const handleUpdateQuantity = (stokIsmi, quantity) => {
-    if (session?.user?.id) {
-      dispatch(updateCartItem({ userId: session.user.id, stokIsmi, quantity }));
-    }
-  };
-
-  const handleRemoveItem = (stokIsmi) => {
-    if (session?.user?.id) {
-      dispatch(removeFromCart({ userId: session.user.id, stokIsmi }));
-    }
-  };
-
-  const handleFinalizeOrder = () => {
-    if (items.length > 0 && session?.user?.id) {
-      dispatch(finalizeOrder(session.user.id));
-    } else if (!session?.user?.id) {
-      alert("Please log in to finalize your order.");
-      router.push('/login');
-    } else {
-      alert("Your cart is empty. Add items before finalizing the order.");
+  const fetchCartItems = async () => {
+    try {
+      const response = await axios.get(`/api/cart?userId=${session.user.id}`);
+      setCartItems(response.data);
+      setLoading(false);
+    } catch (error) {
+      console.error('Error fetching cart items:', error);
+      setLoading(false);
     }
   };
 
-  if (sessionStatus === "loading" || status === 'loading') {
+  const fetchUsers = async () => {
+    try {
+      const response = await axios.get('/api/users');
+      setUsers(response.data);
+    } catch (error) {
+      console.error('Error fetching users:', error);
+    }
+  };
+
+  const handleRemoveItem = async (stokIsmi) => {
+    try {
+      await axios.delete(`/api/cart?userId=${session.user.id}&stokIsmi=${stokIsmi}`);
+      fetchCartItems();
+    } catch (error) {
+      console.error('Error removing item from cart:', error);
+    }
+  };
+
+  const handleCreateOrder = async () => {
+    if (!selectedUser) {
+      alert('Please select a user');
+      return;
+    }
+
+    try {
+      const orderData = {
+        items: cartItems.map(item => ({
+          stokIsmi: item.stokIsmi,
+          quantity: item.quantity
+        })),
+        userId: selectedUser,
+        createdBy: session.user.id
+      };
+
+      console.log('Sending order data:', orderData);
+
+      const response = await axios.post('/api/orders', orderData, {
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        withCredentials: true
+      });
+
+      console.log('Server response:', response.data);
+
+      if (response.data && response.data.message === 'Order created successfully') {
+        try {
+          await axios.delete(`/api/cart?userId=${session.user.id}`);
+          console.log('Cart cleared successfully');
+        } catch (cartError) {
+          console.error('Error clearing cart:', cartError.response ? cartError.response.data : cartError.message);
+          // Don't throw an error here, as the order was still created successfully
+        }
+        fetchCartItems();
+        setSelectedUser('');
+        alert('Order created successfully!');
+      } else {
+        throw new Error('Unexpected response from server');
+      }
+    } catch (error) {
+      console.error('Error creating order:', error.response ? error.response.data : error.message);
+      alert(`Failed to create order. Error: ${error.response ? error.response.data.error : error.message}`);
+    }
+  };
+
+  if (status === "loading" || loading) {
     return <Layout><div>Loading...</div></Layout>;
   }
 
-  if (status === 'failed') {
-    return <Layout><div>Error: {error}</div></Layout>;
+  if (status === "unauthenticated") {
+    return <Layout><div>Please log in to view your cart.</div></Layout>;
   }
 
   return (
     <Layout>
-      <div className="p-4">
-        <h1 className="text-2xl font-bold mb-6">Sepetim</h1>
-        {items.length === 0 ? (
-          <p>Sepetiniz boş.</p>
-        ) : (
-          <>
-            <table className="w-full border-collapse border border-gray-300 mb-4">
-              <thead>
-                <tr className="bg-gray-100">
-                  <th className="border border-gray-300 px-4 py-2">Ürün</th>
-                  <th className="border border-gray-300 px-4 py-2">Adet</th>
-                  <th className="border border-gray-300 px-4 py-2">İşlem</th>
-                </tr>
-              </thead>
-              <tbody>
-                {items.map((item) => (
-                  <tr key={item.stokIsmi}>
-                    <td className="border border-gray-300 px-4 py-2">{item.stokIsmi}</td>
-                    <td className="border border-gray-300 px-4 py-2">
-                      <input
-                        type="number"
-                        min="1"
-                        value={item.quantity}
-                        onChange={(e) => handleUpdateQuantity(item.stokIsmi, parseInt(e.target.value))}
-                        className="w-20 px-2 py-1 border rounded"
-                      />
-                    </td>
-                    <td className="border border-gray-300 px-4 py-2">
-                      <button
-                        onClick={() => handleRemoveItem(item.stokIsmi)}
-                        className="bg-red-500 hover:bg-red-700 text-white font-bold py-1 px-3 rounded"
-                      >
-                        Kaldır
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            <button
-              onClick={handleFinalizeOrder}
-              className="bg-green-500 hover:bg-green-700 text-white font-bold py-2 px-4 rounded"
+      <h1 className="text-2xl font-bold mb-4">Cart</h1>
+      {cartItems.length === 0 ? (
+        <div className="text-center">
+          <p className="mb-4">Your cart is empty.</p>
+          <Link href="/urunArama" className="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded">
+            Go to Product Search
+          </Link>
+        </div>
+      ) : (
+        <div>
+          <ul className="mb-4">
+            {cartItems.map((item) => (
+              <li key={item.stokIsmi} className="flex justify-between items-center mb-2">
+                <span>{item.stokIsmi} - Quantity: {item.quantity}</span>
+                <button
+                  onClick={() => handleRemoveItem(item.stokIsmi)}
+                  className="bg-red-500 text-white p-2 rounded"
+                >
+                  Remove
+                </button>
+              </li>
+            ))}
+          </ul>
+          <div className="mb-4">
+            <select
+              value={selectedUser}
+              onChange={(e) => setSelectedUser(e.target.value)}
+              className="border p-2 mr-2"
             >
-              Siparişi Tamamla
-            </button>
-          </>
-        )}
-      </div>
+              <option value="">Select a user</option>
+              {users.map((user) => (
+                <option key={user._id} value={user._id}>
+                  {user.name} ({user.email})
+                </option>
+              ))}
+            </select>
+          </div>
+          <button
+            onClick={handleCreateOrder}
+            className="bg-green-500 text-white p-2 rounded"
+          >
+            Create Order
+          </button>
+        </div>
+      )}
     </Layout>
   );
 }
